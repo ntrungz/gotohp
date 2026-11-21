@@ -9,15 +9,17 @@ import {
 } from '@/components/ui/sheet'
 import { useColorMode } from '@vueuse/core'
 import { onMounted, onUnmounted, ref, watch } from 'vue'
-import { UserPlus } from '@lucide/vue'
+import { HardDriveDownload, UserPlus } from '@lucide/vue'
 import { ConfigManager } from '../bindings/app/core'
 import { Events } from '@wailsio/runtime'
 import Button from "./components/ui/button/Button.vue"
 import GoogleAccountSelect from './components/GoogleAccountSelect.vue'
 import GoogleAuthSetup from "./components/GoogleAuthSetup.vue"
 import './index.css'
+import ReclaimPanel from "./ReclaimPanel.vue"
 import SettingsPanel from "./SettingsPanel.vue"
 import Upload from './Upload.vue'
+import { reclaimManager } from './utils/ReclaimManager'
 import { uploadManager } from './utils/UploadManager'
 import Toaster from './components/ui/sonner/Sonner.vue'
 
@@ -26,10 +28,12 @@ import { toast } from "vue-sonner"
 useColorMode().value = "dark"
 
 const { state: uploadState } = uploadManager
+const { state: reclaimState } = reclaimManager
 const copyButtonText = ref('Copy as JSON');
 
 // Drag state for dual drop zones
 const isDraggingFiles = ref(false)
+const showReclaimPanel = ref(false)
 
 // Album upload flow state
 const showAlbumInput = ref(false)
@@ -247,6 +251,15 @@ const uploadErrorHandler = (e: Event) => {
   })
 }
 
+const reclaimErrorHandler = (e: Event) => {
+  const event = e as CustomEvent<{ message: string }>
+  toast.error('Reclaim error', {
+    description: event.detail.message,
+    duration: 10000,
+    important: true,
+  })
+}
+
 onMounted(() => {
   document.addEventListener('dragenter', onDragEnter)
   document.addEventListener('dragleave', onDragLeave)
@@ -254,6 +267,7 @@ onMounted(() => {
   document.addEventListener('drop', onDrop)
   window.addEventListener('albumError', albumErrorHandler)
   window.addEventListener('uploadError', uploadErrorHandler)
+  window.addEventListener('reclaimError', reclaimErrorHandler)
 
   // Listen for files-dropped event from backend
   Events.On('files-dropped', async (event: { data: { files: string[]; dropZone: string } }) => {
@@ -286,6 +300,7 @@ onUnmounted(() => {
   document.removeEventListener('drop', onDrop)
   window.removeEventListener('albumError', albumErrorHandler)
   window.removeEventListener('uploadError', uploadErrorHandler)
+  window.removeEventListener('reclaimError', reclaimErrorHandler)
   if (dragLeaveTimeout) {
     clearTimeout(dragLeaveTimeout)
   }
@@ -297,9 +312,20 @@ onUnmounted(() => {
     class="w-screen h-screen flex flex-col items-center"
     style="--wails-draggable: drag"
   >
+    <!-- Reclaim quota view -->
+    <div
+      v-if="!uploadState.isUploading && (showReclaimPanel || reclaimState.phase === 'scanning' || reclaimState.phase === 'running')"
+      class="w-full h-full"
+    >
+      <ReclaimPanel
+        :account="selectedOption"
+        @close="showReclaimPanel = false"
+      />
+    </div>
+
     <!-- Drop zones shown when dragging files -->
     <div
-      v-if="!uploadState.isUploading && isDraggingFiles && options.length > 0"
+      v-else-if="!uploadState.isUploading && isDraggingFiles && options.length > 0"
       class="w-screen h-screen flex flex-col gap-3 p-6"
       style="--wails-draggable: none"
     >
@@ -444,21 +470,38 @@ onUnmounted(() => {
             </Button>
           </div>
 
-          <Sheet>
-            <SheetTrigger>
-              <Button
-                variant="outline"
-                class="cursor-pointer select-none"
-              >
-                Settings
-              </Button>
-            </SheetTrigger>
-            <SheetContent side="bottom">
-              <TooltipProvider disable-hoverable-content>
-                <SettingsPanel />
-              </TooltipProvider>
-            </SheetContent>
-          </Sheet>
+          <div
+            class="flex items-center gap-2"
+            style="--wails-draggable: none"
+          >
+            <Button
+              variant="outline"
+              class="cursor-pointer select-none"
+              @click="showReclaimPanel = true"
+            >
+              <HardDriveDownload
+                :size="15"
+                class="mr-1.5"
+              />
+              Reclaim Quota
+            </Button>
+
+            <Sheet>
+              <SheetTrigger>
+                <Button
+                  variant="outline"
+                  class="cursor-pointer select-none"
+                >
+                  Settings
+                </Button>
+              </SheetTrigger>
+              <SheetContent side="bottom">
+                <TooltipProvider disable-hoverable-content>
+                  <SettingsPanel />
+                </TooltipProvider>
+              </SheetContent>
+            </Sheet>
+          </div>
 
           <div
             v-if="uploadState.uploadedFiles > 0 || uploadState.results.fail.length > 0"

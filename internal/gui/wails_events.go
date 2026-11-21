@@ -21,4 +21,13 @@ func init() {
 	application.RegisterEvent[int64]("uploadTotalBytesDelta")
 	application.RegisterEvent[core.FilesDroppedEvent]("files-dropped")
 	application.RegisterEvent[core.StartUploadEvent]("startUpload")
+	application.RegisterEvent[core.LibraryScanStats]("reclaimScanProgress")
+	application.RegisterEvent[core.ReclaimScanResult]("reclaimScanComplete")
+	application.RegisterEvent[core.ReclaimBatchStart]("reclaimStart")
+	application.RegisterEvent[core.ReclaimItemProgress]("reclaimProgress")
+	application.RegisterEvent[core.ReclaimItemResult]("reclaimItemResult")
+	application.RegisterEvent[core.ReclaimSummary]("reclaimStop")
+	application.RegisterEvent[core.StartReclaimScanEvent]("startReclaimScan")
+	application.RegisterEvent[core.StartReclaimRunEvent]("startReclaimRun")
+	application.RegisterEvent[application.Void]("reclaimCancel")
 }

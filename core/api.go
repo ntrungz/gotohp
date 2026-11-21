@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"app/generated"
@@ -23,19 +24,28 @@ import (
 const photosCreateMediaItemsEndpoint = "https://photosdata-pa.googleapis.com/6439526531001121323/16538846908252377752"
 
 type Api struct {
-	androidAPIVersion int64
-	model             string
-	make              string
-	clientVersionCode int64
-	userAgent         string
-	language          string
-	authData          string
-	client            *http.Client
-	authResponseCache map[string]string
-	commitEndpoint    string
-	commitRetryConfig *RetryConfig
-	saver             bool
-	useQuota          bool
+	androidAPIVersion    int64
+	model                string
+	make                 string
+	clientVersionCode    int64
+	userAgent            string
+	language             string
+	authData             string
+	client               *http.Client
+	authMu               sync.Mutex
+	authResponseCache    map[string]string
+	commitEndpoint       string
+	commitRetryConfig    *RetryConfig
+	uploadTokenEndpoint  string
+	uploadMediaBaseURL   string
+	libraryStateEndpoint string
+	trashEndpoint        string
+	downloadURLsEndpoint string
+	setCaptionEndpoint   string
+	setFavoriteEndpoint  string
+	setArchivedEndpoint  string
+	saver                bool
+	useQuota             bool
 }
 
 type AuthResponse struct {
@@ -121,6 +131,9 @@ func newAPIFromCredential(credentials string, proxy string) (*Api, error) {
 }
 
 func (a *Api) BearerToken() (string, error) {
+	a.authMu.Lock()
+	defer a.authMu.Unlock()
+
 	expiryStr := a.authResponseCache["Expiry"]
 	expiry, err := strconv.ParseInt(expiryStr, 10, 64)
 	if err != nil {
@@ -270,9 +283,13 @@ func (a *Api) GetUploadToken(shaHashB64 string, fileSize int64) (string, error) 
 	}
 
 	// Create the request
+	endpoint := a.uploadTokenEndpoint
+	if endpoint == "" {
+		endpoint = "https://photos.googleapis.com/data/upload/uploadmedia/interactive"
+	}
 	req, err := http.NewRequest(
 		"POST",
-		"https://photos.googleapis.com/data/upload/uploadmedia/interactive",
+		endpoint,
 		bytes.NewReader(serializedData),
 	)
 	if err != nil {
@@ -401,7 +418,11 @@ func (a *Api) UploadFileWithProgress(ctx context.Context, filePath string, uploa
 	}
 	fileSize := fileInfo.Size()
 
-	uploadURL := "https://photos.googleapis.com/data/upload/uploadmedia/interactive?upload_id=" + uploadToken
+	uploadBase := a.uploadMediaBaseURL
+	if uploadBase == "" {
+		uploadBase = "https://photos.googleapis.com/data/upload/uploadmedia/interactive"
+	}
+	uploadURL := uploadBase + "?upload_id=" + uploadToken
 	retryConfig := DefaultRetryConfig()
 
 	var lastErr error
@@ -518,13 +539,14 @@ func (a *Api) CommitUpload(
 	}
 
 	var qualityVal int64 = 3
+	model := a.model
 	if a.saver {
 		qualityVal = 1
-		a.model = "Pixel 2"
+		model = "Pixel 2"
 	}
 
 	if a.useQuota {
-		a.model = "Pixel 8"
+		model = "Pixel 8"
 	}
 
 	unknownInt := int64(46000000)
@@ -546,7 +568,7 @@ func (a *Api) CommitUpload(
 			Field10: 1,
 		},
 		Field2: &generated.CommitUploadField2Type{
-			Model:             a.model,
+			Model:             model,
 			Make:              a.make,
 			AndroidApiVersion: a.androidAPIVersion,
 		},
