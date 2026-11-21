@@ -2,7 +2,9 @@
 
 ![demo](readme_assets/app_demo.webp)
 
-Unofficial Google Photos Desktop GUI Client
+Unofficial Google Photos Desktop GUI & CLI Client — fork of [xob0t/gotohp](https://github.com/xob0t/gotohp) extended with **Quota Reclaim** support.
+
+> **Attribution & Fork Notice**: This repository (`ntrungz/gotohp`) is a fork of the original [`xob0t/gotohp`](https://github.com/xob0t/gotohp) project by `@xob0t` (and references mobile API protocol findings from [`xob0t/gpmc`](https://github.com/xob0t/gpmc)). All original upload, authentication, Live Photo pairing, and desktop GUI architecture belong to the upstream authors.
 
 - Unlimited uploads (can be disabled)
 - Quota reclaim: scan quota-consuming remote items, download originals locally, move to Trash (or optionally delete permanently), and re-upload without quota
@@ -80,15 +82,16 @@ gotohp-cli reclaim --delete-permanently --saver --cleanup-local
 wget -q https://go.dev/dl/go1.27.0.linux-amd64.tar.gz && rm -rf /usr/local/go && tar -C /usr/local -xzf go1.27.0.linux-amd64.tar.gz
 export PATH=$PATH:/usr/local/go/bin
 
-git clone -b feat/quota-reclaim https://github.com/ntrungz/gotohp.git
+git clone https://github.com/ntrungz/gotohp.git
 cd gotohp
 go build -tags cli -o gotohp-cli .
 
-./gotohp-cli creds add "<oauth_token hoặc androidId=...>"
+./gotohp-cli creds add "<oauth_token or androidId=...>"
 ./gotohp-cli reclaim --dry-run --no-tui
 ```
 
 > **Important Disclaimers & Safety Notes**
+> - **Fork & Upstream Credits**: Built on top of [`xob0t/gotohp`](https://github.com/xob0t/gotohp) (MIT License) with Quota Reclaim RPCs informed by [`xob0t/gpmc`](https://github.com/xob0t/gpmc). This fork is not affiliated with or endorsed by Google LLC or the upstream author.
 > - **Unofficial API / Use at your own risk**: `gotohp` uses reverse-engineered Google Photos mobile endpoints. Google may change endpoints, rate limits, or quota policies at any time. Always keep independent backups of irreplaceable media.
 > - **Trash & SHA-1 deduplication**: By default, `reclaim` only moves items to Google Photos Trash so you have a 60-day recovery window. However, Google Photos may treat an active Trash item with the exact same SHA-1 hash as a duplicate when re-uploading; if your test item fails/dedups against Trash, use `--delete-permanently` (irreversible on Google Photos, though your local copy in `--download-dir` is preserved unless `--cleanup-local` is set).
 > - **Test small first**: Always run `--dry-run` and `--limit 1` (or `--limit 2`) to verify behavior on your account before running a full batch.
