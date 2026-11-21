@@ -4,6 +4,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -71,10 +72,51 @@ func runGUI() {
 	})
 
 	uploadManager := core.NewUploadManager(gui.NewWailsReporter(wailsApp), wailsApp.Logger)
+	reclaimManager := core.NewReclaimManager(gui.NewWailsReclaimReporter(wailsApp), wailsApp.Logger)
 
 	// Listen for upload cancel event
 	wailsApp.Event.On("uploadCancel", func(e *application.CustomEvent) {
 		uploadManager.Cancel()
+	})
+
+	// Listen for quota reclaim events
+	wailsApp.Event.On("reclaimCancel", func(e *application.CustomEvent) {
+		reclaimManager.Cancel()
+	})
+
+	wailsApp.Event.On("startReclaimScan", func(e *application.CustomEvent) {
+		data, _ := decodeWailsEvent[core.StartReclaimScanEvent](e.Data)
+		prefs := configManager.GetSettings()
+		reclaimManager.Scan(core.ReclaimOptions{
+			Api: core.ApiOptions{
+				Account:  data.Account,
+				Proxy:    prefs.Proxy,
+				UseQuota: false,
+			},
+		})
+	})
+
+	wailsApp.Event.On("startReclaimRun", func(e *application.CustomEvent) {
+		data, ok := decodeWailsEvent[core.StartReclaimRunEvent](e.Data)
+		if !ok {
+			wailsApp.Logger.Error("startReclaimRun: unexpected data type", "type", fmt.Sprintf("%T", e.Data))
+			return
+		}
+		prefs := configManager.GetSettings()
+		reclaimManager.Run(core.ReclaimOptions{
+			Api: core.ApiOptions{
+				Proxy:    prefs.Proxy,
+				Saver:    data.Saver,
+				UseQuota: false,
+			},
+			DownloadDir:       data.DownloadDir,
+			DeletePermanently: data.DeletePermanently,
+			CleanupLocal:      data.CleanupLocal,
+			RestoreMetadata:   data.RestoreMetadata,
+			Threads:           data.Threads,
+			Limit:             data.Limit,
+			Items:             data.Items,
+		})
 	})
 
 	window.OnWindowEvent(events.Common.WindowFilesDropped, func(event *application.WindowEvent) {
@@ -110,6 +152,24 @@ func runGUI() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func decodeWailsEvent[T any](raw any) (T, bool) {
+	if typed, ok := raw.(T); ok {
+		return typed, true
+	}
+	var out T
+	if raw == nil {
+		return out, true
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return out, false
+	}
+	if err := json.Unmarshal(b, &out); err != nil {
+		return out, false
+	}
+	return out, true
 }
 
 func normalizeFrontendDevServerURL() {
