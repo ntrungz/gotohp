@@ -124,3 +124,20 @@ func TestFinishReclaimOutputAndExitCodes(t *testing.T) {
 		}
 	})
 }
+
+func TestJSONProgressWriter(t *testing.T) {
+	var buf bytes.Buffer
+	jw := &jsonProgressWriter{w: &buf}
+	jw.Emit("scan_progress", core.LibraryScanStats{PagesScanned: 2, EligibleCount: 5, TotalQuotaBytes: 1024})
+
+	var decoded struct {
+		Event string                `json:"event"`
+		Data  core.LibraryScanStats `json:"data"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &decoded); err != nil {
+		t.Fatalf("invalid NDJSON line: %v", err)
+	}
+	if decoded.Event != "scan_progress" || decoded.Data.PagesScanned != 2 || decoded.Data.EligibleCount != 5 {
+		t.Fatalf("unexpected decoded event: %+v", decoded)
+	}
+}

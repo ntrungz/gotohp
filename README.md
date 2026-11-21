@@ -1,5 +1,7 @@
 # gotohp
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ntrungz/gotohp/blob/main/colab/gotohp_reclaim.ipynb)
+
 ![demo](readme_assets/app_demo.webp)
 
 Unofficial Google Photos Desktop GUI & CLI Client — fork of [xob0t/gotohp](https://github.com/xob0t/gotohp) extended with **Quota Reclaim** support.
@@ -75,7 +77,18 @@ gotohp-cli reclaim --download-dir ./reclaim-backups --delete-permanently --threa
 gotohp-cli reclaim --delete-permanently --saver --cleanup-local
 ```
 
-### Run on Google Colab
+### Run on Google Colab (Interactive Web UI)
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ntrungz/gotohp/blob/main/colab/gotohp_reclaim.ipynb)
+
+Open [`colab/gotohp_reclaim.ipynb`](colab/gotohp_reclaim.ipynb) in Google Colab for a visual form-based interface featuring:
+- One-click Go + `gotohp-cli` build & optional Google Drive mount for persistent backups
+- Hidden credential entry (`getpass`) or Colab Secrets (`GOTOHP_CRED`)
+- Live NDJSON scan dashboard (`--json-progress`) with searchable/filterable table of quota-consuming items
+- Interactive Reclaim form with safety confirmation gate for permanent deletion, live progress bar, and per-worker stage status
+- Optional Drive-to-Google-Photos zero-quota uploader, ZIP backup download, and VM credential cleanup
+
+Or run manually from a bash cell:
 
 ```bash
 %%bash
