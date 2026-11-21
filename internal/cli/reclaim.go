@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"app/core"
 
@@ -45,12 +46,14 @@ func newReclaimCommand() *cobra.Command {
 	f.IntP("threads", "t", 1, "number of concurrent reclaim workers")
 	f.StringP("log-level", "l", "info", "log level: debug, info, warn, error")
 	f.Bool("no-tui", false, "disable the interactive progress UI")
+	f.Bool("json-progress", false, "stream machine-readable NDJSON progress events to stderr")
 	return cmd
 }
 
 type reclaimRunSettings struct {
-	logLevel string
-	noTUI    bool
+	logLevel     string
+	noTUI        bool
+	jsonProgress bool
 }
 
 func reclaimOptionsFromFlags(f *pflag.FlagSet) core.ReclaimOptions {
@@ -92,7 +95,12 @@ func runReclaimCommand(cmd *cobra.Command, _ []string) error {
 	opts := reclaimOptionsFromFlags(f)
 	logLevel, _ := f.GetString("log-level")
 	noTUI, _ := f.GetBool("no-tui")
-	return runReclaim(opts, reclaimRunSettings{logLevel: logLevel, noTUI: noTUI})
+	jsonProgress, _ := f.GetBool("json-progress")
+	return runReclaim(opts, reclaimRunSettings{
+		logLevel:     logLevel,
+		noTUI:        noTUI,
+		jsonProgress: jsonProgress,
+	})
 }
 
 // Bubbletea messages for reclaim TUI
@@ -224,36 +232,91 @@ func (m reclaimModel) View() string {
 	return b.String()
 }
 
+type jsonProgressEvent struct {
+	Event string `json:"event"`
+	Data  any    `json:"data"`
+}
+
+type jsonProgressWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (jw *jsonProgressWriter) Emit(event string, data any) {
+	if jw == nil || jw.w == nil {
+		return
+	}
+	encoded, err := json.Marshal(jsonProgressEvent{Event: event, Data: data})
+	if err != nil {
+		return
+	}
+	jw.mu.Lock()
+	_, _ = jw.w.Write(append(encoded, '\n'))
+	jw.mu.Unlock()
+}
+
 type teaReclaimReporter struct {
-	p *tea.Program
+	p  *tea.Program
+	jw *jsonProgressWriter
 }
 
 func (r teaReclaimReporter) ReclaimScanProgress(stats core.LibraryScanStats) {
+	r.jw.Emit("scan_progress", stats)
 	r.p.Send(reclaimScanProgressMsg{stats: stats})
 }
 
 func (r teaReclaimReporter) ReclaimScanComplete(res core.ReclaimScanResult) {
+	r.jw.Emit("scan_complete", struct {
+		Stats        core.LibraryScanStats `json:"stats"`
+		DownloadDir  string                `json:"downloadDir"`
+		ErrorMessage string                `json:"errorMessage,omitempty"`
+	}{
+		Stats:        res.Stats,
+		DownloadDir:  res.DownloadDir,
+		ErrorMessage: res.ErrorMessage,
+	})
 	r.p.Send(reclaimScanCompleteMsg{result: res})
 }
 
 func (r teaReclaimReporter) ReclaimStart(batch core.ReclaimBatchStart) {
+	r.jw.Emit("reclaim_start", batch)
 	r.p.Send(reclaimStartMsg{batch: batch})
 }
 
 func (r teaReclaimReporter) ReclaimProgress(progress core.ReclaimItemProgress) {
+	r.jw.Emit("item_progress", progress)
 	r.p.Send(reclaimItemProgressMsg{progress: progress})
 }
 
 func (r teaReclaimReporter) ReclaimItemResult(res core.ReclaimItemResult) {
+	r.jw.Emit("item_result", res)
 	r.p.Send(reclaimItemResultMsg{result: res})
 }
 
 func (r teaReclaimReporter) ReclaimStop(summary core.ReclaimSummary) {
+	r.jw.Emit("reclaim_stop", struct {
+		Total          int    `json:"total"`
+		Succeeded      int    `json:"succeeded"`
+		Failed         int    `json:"failed"`
+		ReclaimedBytes int64  `json:"reclaimedBytes"`
+		DownloadDir    string `json:"downloadDir"`
+		Canceled       bool   `json:"canceled,omitempty"`
+		ErrorMessage   string `json:"errorMessage,omitempty"`
+	}{
+		Total:          summary.Total,
+		Succeeded:      summary.Succeeded,
+		Failed:         summary.Failed,
+		ReclaimedBytes: summary.ReclaimedBytes,
+		DownloadDir:    summary.DownloadDir,
+		Canceled:       summary.Canceled,
+		ErrorMessage:   summary.ErrorMessage,
+	})
 	r.p.Send(reclaimStopMsg{summary: summary})
 }
 
 func shouldUseReclaimTUI(settings reclaimRunSettings) bool {
 	return !settings.noTUI &&
+		!settings.jsonProgress &&
 		term.IsTerminal(os.Stdin.Fd()) &&
 		term.IsTerminal(os.Stdout.Fd())
 }
@@ -272,7 +335,12 @@ func runReclaim(opts core.ReclaimOptions, settings reclaimRunSettings) error {
 	}
 	p := tea.NewProgram(model, programOptions...)
 
-	mgr = core.NewReclaimManager(teaReclaimReporter{p: p}, newLogger(parseLogLevel(settings.logLevel)))
+	var jw *jsonProgressWriter
+	if settings.jsonProgress {
+		jw = &jsonProgressWriter{w: os.Stderr}
+	}
+
+	mgr = core.NewReclaimManager(teaReclaimReporter{p: p, jw: jw}, newLogger(parseLogLevel(settings.logLevel)))
 	go mgr.Run(opts)
 
 	finalModel, err := p.Run()
