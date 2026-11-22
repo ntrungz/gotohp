@@ -213,6 +213,47 @@ func TestScanQuotaConsumingMediaPaginationAndFiltering(t *testing.T) {
 	}
 }
 
+func TestScanQuotaConsumingMediaDedupesSharedDedupKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := buildTestLibraryPageResponse("sync-1", "",
+			buildTestMediaItemWire("mk-a1", "dk-same", "IMG_4587.HEIC", "", 2400, 2400, 1700000000000, 0, 1, false, false, false),
+			buildTestMediaItemWire("mk-a2", "dk-same", "IMG_4587.HEIC", "Trip", 2400, 2400, 1700000000000, 0, 1, false, true, false),
+			buildTestMediaItemWire("mk-a3", "dk-same", "IMG_4587.HEIC", "", 2400, 2400, 1700000000000, 0, 1, true, false, false),
+			buildTestMediaItemWire("mk-b", "dk-other", "IMG_2533.HEIC", "", 1000, 1000, 1700000001000, 0, 1, false, false, false),
+		)
+		_, _ = w.Write(resp)
+	}))
+	defer srv.Close()
+
+	api := newTestAPIForServer(srv.URL, false)
+	items, stats, err := api.ScanQuotaConsumingMedia(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("ScanQuotaConsumingMedia failed: %v", err)
+	}
+	if len(items) != 2 || stats.EligibleCount != 2 || stats.SkippedDuplicate != 2 {
+		t.Fatalf("expected 2 unique items and 2 duplicates, got items=%d stats=%+v", len(items), stats)
+	}
+	if stats.TotalQuotaBytes != 3400 {
+		t.Fatalf("TotalQuotaBytes = %d, want 3400 (duplicates must not be double counted)", stats.TotalQuotaBytes)
+	}
+	first := items[0]
+	if first.MediaKey != "mk-a1" || !first.IsFavorite || !first.IsArchived || first.Caption != "Trip" {
+		t.Fatalf("duplicate metadata not merged into kept item: %+v", first)
+	}
+}
+
+func TestDedupeMediaItemsByDedupKey(t *testing.T) {
+	in := []RemoteMediaItem{
+		{MediaKey: "m1", DedupKey: "d1"},
+		{MediaKey: "m2", DedupKey: "d2"},
+		{MediaKey: "m3", DedupKey: "d1", IsFavorite: true},
+	}
+	out, dups := dedupeMediaItemsByDedupKey(in)
+	if dups != 1 || len(out) != 2 || out[0].MediaKey != "m1" || out[1].MediaKey != "m2" || !out[0].IsFavorite {
+		t.Fatalf("unexpected dedupe result: dups=%d out=%+v", dups, out)
+	}
+}
+
 func TestReclaimManagerEndToEndDefaultTrashOnlyAndMetadataRestore(t *testing.T) {
 	fileBytes := []byte("fake-original-jpeg-content-1234567890")
 	var (

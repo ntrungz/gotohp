@@ -62,6 +62,10 @@ type LibraryScanStats struct {
 	SkippedLocked    int   `json:"skippedLocked"`
 	SkippedNotOwned  int   `json:"skippedNotOwned"`
 	SkippedNoDedupID int   `json:"skippedNoDedupId"`
+	// SkippedDuplicate counts extra entries sharing a DedupKey (same file
+	// content) with an already selected item. Trash/delete RPCs act on the
+	// DedupKey, so each unique file must be reclaimed exactly once.
+	SkippedDuplicate int `json:"skippedDuplicate"`
 }
 
 // DownloadURLs holds the remote download URLs for a media item.
@@ -181,6 +185,7 @@ func (a *Api) ScanQuotaConsumingMedia(
 	var stats LibraryScanStats
 	seenMedia := make(map[string]struct{})
 	seenTokens := make(map[string]struct{})
+	eligibleByDedup := make(map[string]int)
 	var eligible []RemoteMediaItem
 
 	processPage := func(page LibraryPage) {
@@ -214,7 +219,13 @@ func (a *Api) ScanQuotaConsumingMedia(
 				stats.SkippedNoDedupID++
 				continue
 			}
+			if idx, dup := eligibleByDedup[item.DedupKey]; dup {
+				mergeDuplicateMediaItem(&eligible[idx], item)
+				stats.SkippedDuplicate++
+				continue
+			}
 
+			eligibleByDedup[item.DedupKey] = len(eligible)
 			eligible = append(eligible, item)
 			stats.EligibleCount++
 			stats.TotalQuotaBytes += item.QuotaChargedBytes
@@ -256,6 +267,42 @@ func (a *Api) ScanQuotaConsumingMedia(
 	})
 
 	return eligible, stats, nil
+}
+
+// mergeDuplicateMediaItem folds metadata from dup (same DedupKey, i.e. same file
+// content) into dst so the single reclaimed copy keeps favorite, archived, and
+// caption flags present on any of the duplicate entries.
+func mergeDuplicateMediaItem(dst *RemoteMediaItem, dup RemoteMediaItem) {
+	dst.IsFavorite = dst.IsFavorite || dup.IsFavorite
+	dst.IsArchived = dst.IsArchived || dup.IsArchived
+	if dst.Caption == "" {
+		dst.Caption = dup.Caption
+	}
+	if dup.QuotaChargedBytes > dst.QuotaChargedBytes {
+		dst.QuotaChargedBytes = dup.QuotaChargedBytes
+	}
+}
+
+// dedupeMediaItemsByDedupKey keeps the first item for each DedupKey, merging
+// metadata from later duplicates, and preserves the original order.
+func dedupeMediaItemsByDedupKey(items []RemoteMediaItem) ([]RemoteMediaItem, int) {
+	out := make([]RemoteMediaItem, 0, len(items))
+	index := make(map[string]int, len(items))
+	dups := 0
+	for _, item := range items {
+		key := item.DedupKey
+		if key == "" {
+			key = item.MediaKey
+		}
+		if idx, ok := index[key]; ok {
+			mergeDuplicateMediaItem(&out[idx], item)
+			dups++
+			continue
+		}
+		index[key] = len(out)
+		out = append(out, item)
+	}
+	return out, dups
 }
 
 // GetDownloadURLs fetches direct download URLs (original and edited) for a media item.

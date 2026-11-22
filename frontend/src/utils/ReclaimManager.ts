@@ -29,6 +29,7 @@ export interface LibraryScanStats {
   skippedLocked: number;
   skippedNotOwned: number;
   skippedNoDedupId: number;
+  skippedDuplicate?: number;
 }
 
 export interface ReclaimScanResult {
@@ -125,6 +126,7 @@ function emptyScanStats(): LibraryScanStats {
     skippedLocked: 0,
     skippedNotOwned: 0,
     skippedNoDedupId: 0,
+    skippedDuplicate: 0,
   };
 }
 

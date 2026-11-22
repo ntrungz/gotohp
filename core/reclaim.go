@@ -308,6 +308,11 @@ func (m *ReclaimManager) runSync(ctx context.Context, opts ReclaimOptions) Recla
 		items = scanRes.Items
 	}
 
+	// Trash/delete RPCs operate on DedupKey, so items sharing one must never be
+	// processed by separate workers (a later worker could trash the copy an
+	// earlier worker just re-uploaded, since it has the same SHA-1).
+	items, _ = dedupeMediaItemsByDedupKey(items)
+
 	if opts.Limit > 0 && len(items) > opts.Limit {
 		items = items[:opts.Limit]
 	}
