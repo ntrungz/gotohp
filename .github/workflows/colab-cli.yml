@@ -1,0 +1,69 @@
+name: Build Prebuilt Linux CLI (Colab)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "go.mod"
+      - "go.sum"
+      - "*.go"
+      - "core/**"
+      - "internal/**"
+      - "generated/**"
+      - ".github/workflows/colab-cli.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-colab-cli:
+    name: Build Linux amd64 CLI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build static Linux amd64 CLI
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+            -tags cli -trimpath -buildvcs=false -ldflags="-w -s" \
+            -o gotohp-cli-linux-amd64 .
+          sha256sum gotohp-cli-linux-amd64 > gotohp-cli-linux-amd64.sha256
+          ls -lh gotohp-cli-linux-amd64
+
+      - name: Publish to rolling colab-cli release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="colab-cli"
+          NOTES="Prebuilt static Linux amd64 \`gotohp-cli\` binary automatically built from \`main\` (\`${GITHUB_SHA::7}\`) for fast Google Colab startup."
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release edit "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --notes "$NOTES"
+            gh release upload "$TAG" \
+              gotohp-cli-linux-amd64 \
+              gotohp-cli-linux-amd64.sha256 \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" \
+              gotohp-cli-linux-amd64 \
+              gotohp-cli-linux-amd64.sha256 \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Prebuilt CLI for Google Colab" \
+              --notes "$NOTES" \
+              --prerelease
+          fi
