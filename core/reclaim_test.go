@@ -560,3 +560,45 @@ func TestSanitizePathSegment(t *testing.T) {
 		t.Fatalf("got %q, want a_b_c_d.jpg", got)
 	}
 }
+
+func TestCommitUploadRetriesOn409Conflict(t *testing.T) {
+	var commitAttempts int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/commit" {
+			http.NotFound(w, r)
+			return
+		}
+		commitAttempts++
+		if commitAttempts < 3 {
+			http.Error(w, "The operation was aborted.", http.StatusConflict)
+			return
+		}
+		respProto := &generated.CreateMediaItemsResponse{
+			Item: []*generated.CreateMediaItemResponseItem{
+				{
+					ResultItem: &generated.CreateMediaItemResult{
+						MediaKey: "mk-after-409-retry",
+					},
+				},
+			},
+		}
+		out, _ := proto.Marshal(respProto)
+		_, _ = w.Write(out)
+	}))
+	defer srv.Close()
+
+	api := newTestAPIForServer(srv.URL, false)
+	api.commitRetryConfig = &RetryConfig{
+		MaxRetries:   3,
+		InitialDelay: time.Millisecond,
+		MaxDelay:     2 * time.Millisecond,
+	}
+
+	mk, err := api.CommitUpload(&generated.CommitToken{Field1: 2, Field2: []byte("f2")}, "IMG_3555.HEIC", []byte("12345678901234567890"), 1700000000)
+	if err != nil {
+		t.Fatalf("expected CommitUpload to succeed after 409 retries, got err: %v", err)
+	}
+	if mk != "mk-after-409-retry" || commitAttempts != 3 {
+		t.Fatalf("got mediaKey=%q attempts=%d, want mk-after-409-retry attempts=3", mk, commitAttempts)
+	}
+}

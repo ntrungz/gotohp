@@ -18,8 +18,8 @@ func NewHTTPClientWithProxy(proxyURLStr string) (*http.Client, error) {
 
 	// Configure connection pooling for concurrent uploads
 	transport.MaxIdleConns = 100
-	transport.MaxIdleConnsPerHost = 10
-	transport.MaxConnsPerHost = 10
+	transport.MaxIdleConnsPerHost = 25
+	transport.MaxConnsPerHost = 25
 	transport.IdleConnTimeout = 90 * time.Second
 
 	// Configure proxy if provided
@@ -50,7 +50,7 @@ type RetryConfig struct {
 // DefaultRetryConfig returns sensible defaults for retries
 func DefaultRetryConfig() RetryConfig {
 	return RetryConfig{
-		MaxRetries:   3,
+		MaxRetries:   5,
 		InitialDelay: 1 * time.Second,
 		MaxDelay:     30 * time.Second,
 	}
@@ -64,8 +64,12 @@ func ShouldRetry(resp *http.Response, err error) bool {
 	if resp == nil {
 		return true
 	}
-	// Retry on 5xx server errors and 429 (rate limit)
-	return resp.StatusCode >= 500 || resp.StatusCode == 429
+	// Retry on 5xx server errors, 429 (rate limit), 409 (concurrency conflict /
+	// transaction aborted), and 408 (request timeout).
+	return resp.StatusCode >= 500 ||
+		resp.StatusCode == http.StatusTooManyRequests ||
+		resp.StatusCode == http.StatusConflict ||
+		resp.StatusCode == http.StatusRequestTimeout
 }
 
 // CalculateBackoff returns the delay for a given attempt (exponential backoff with jitter)
@@ -74,8 +78,15 @@ func CalculateBackoff(attempt int, config RetryConfig) time.Duration {
 	if delay > config.MaxDelay {
 		delay = config.MaxDelay
 	}
-	// Add up to 10% jitter to prevent thundering herd
-	jitter := time.Duration(rand.Int63n(int64(delay / 10)))
+	if delay <= 0 {
+		return 0
+	}
+	// Add up to 50% jitter to spread concurrent workers and avoid repeated 409/429 collisions
+	jitterWindow := int64(delay / 2)
+	if jitterWindow <= 0 {
+		return delay
+	}
+	jitter := time.Duration(rand.Int63n(jitterWindow))
 	return delay + jitter
 }
 

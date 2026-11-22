@@ -265,62 +265,64 @@ func (a *Api) GetUploadToken(shaHashB64 string, fileSize int64) (string, error) 
 		return "", fmt.Errorf("failed to marshal protobuf: %w", err)
 	}
 
-	// Get the bearer token
-	bearerToken, err := a.BearerToken()
-	if err != nil {
-		return "", fmt.Errorf("failed to get bearer token: %w", err)
-	}
-
-	// Prepare headers
-	headers := map[string]string{
-		"Accept-Encoding":         "gzip",
-		"Accept-Language":         a.language,
-		"Content-Type":            "application/x-protobuf",
-		"User-Agent":              a.userAgent,
-		"Authorization":           "Bearer " + bearerToken,
-		"X-Goog-Hash":             "sha1=" + shaHashB64,
-		"X-Upload-Content-Length": strconv.Itoa(int(fileSize)),
-	}
-
-	// Create the request
 	endpoint := a.uploadTokenEndpoint
 	if endpoint == "" {
 		endpoint = "https://photos.googleapis.com/data/upload/uploadmedia/interactive"
 	}
-	req, err := http.NewRequest(
-		"POST",
-		endpoint,
-		bytes.NewReader(serializedData),
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
-	}
 
-	// Set headers
-	for k, v := range headers {
-		req.Header.Set(k, v)
+	retryConfig := DefaultRetryConfig()
+	if a.commitRetryConfig != nil {
+		retryConfig = *a.commitRetryConfig
 	}
+	var lastErr error
+	for attempt := 0; attempt <= retryConfig.MaxRetries; attempt++ {
+		if attempt > 0 {
+			time.Sleep(CalculateBackoff(attempt-1, retryConfig))
+		}
 
-	// Make the request
-	resp, err := a.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("request failed: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
+		bearerToken, err := a.BearerToken()
+		if err != nil {
+			lastErr = fmt.Errorf("failed to get bearer token: %w", err)
+			continue
+		}
 
-	// Check for errors
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		req, err := http.NewRequest("POST", endpoint, bytes.NewReader(serializedData))
+		if err != nil {
+			return "", fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Accept-Encoding", "gzip")
+		req.Header.Set("Accept-Language", a.language)
+		req.Header.Set("Content-Type", "application/x-protobuf")
+		req.Header.Set("User-Agent", a.userAgent)
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+		req.Header.Set("X-Goog-Hash", "sha1="+shaHashB64)
+		req.Header.Set("X-Upload-Content-Length", strconv.Itoa(int(fileSize)))
+
+		resp, err := a.client.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("request failed: %w", err)
+			continue
+		}
+
 		body, _ := ReadResponseBody(resp)
-		return "", fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+		_ = resp.Body.Close()
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			lastErr = fmt.Errorf("request failed with status %d: %s", resp.StatusCode, string(body))
+			if !ShouldRetry(resp, nil) {
+				return "", lastErr
+			}
+			continue
+		}
+
+		uploadToken := resp.Header.Get("X-GUploader-UploadID")
+		if uploadToken == "" {
+			return "", errors.New("response missing X-GUploader-UploadID header")
+		}
+		return uploadToken, nil
 	}
 
-	// Get the upload token from headers
-	uploadToken := resp.Header.Get("X-GUploader-UploadID")
-	if uploadToken == "" {
-		return "", errors.New("response missing X-GUploader-UploadID header")
-	}
-
-	return uploadToken, nil
+	return "", fmt.Errorf("upload token request failed after %d attempts: %w", retryConfig.MaxRetries+1, lastErr)
 }
 
 // Check library for existing files with the hash
